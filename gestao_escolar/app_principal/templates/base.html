@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Gestão Escolar{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  {% load static %}
+  <link rel="stylesheet" type="text/css" href="{% static 'admin/css/base.css' %}">
+  <link rel="stylesheet" type="text/css" href="{% static 'admin/css/dashboard.css' %}">
+  <link rel="stylesheet" type="text/css" href="{% static 'admin/css/responsive.css' %}">
+</head>
+<body>
+  <header>
+    <nav class="topbar">
+      <div class="logo">
+        <img src="{% static 'img/logo.png' %}" alt="Logo" height="40">
+        <span>Gestão Escolar</span>
+      </div>
+      <div class="user-menu">
+        {% if user.is_authenticated %}
+          Logado como <strong>{{ user.username }}</strong> — <a href="{% url 'logout' %}">Sair</a>
+        {% else %}
+          <a href="{% url 'login' %}">Entrar</a> | <a href="{% url 'register' %}">Cadastrar</a>
+        {% endif %}
+      </div>
+    </nav>
+  </header>
+
+  <main class="content">
+    {% if messages %}
+      <ul class="messages">
+        {% for m in messages %}
+          <li class="{{ m.tags }}">{{ m }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <p>© 2025 Gestão Escolar - Sistema Acadêmico</p>
+  </footer>
+</body>
+</html>
