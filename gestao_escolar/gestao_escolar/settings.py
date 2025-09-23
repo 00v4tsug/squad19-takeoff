@@ -7,6 +7,14 @@ SECRET_KEY = "change-me-in-production"
 
 DEBUG = True
 
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8000",
+    "https://localhost:8000",
+    "http://127.0.0.1:8000",
+    "https://127.0.0.1:8000",
+    "https://bookish-space-computing-machine-g4p754pwjppcjp-8000.app.github.dev/"
+]
+
 ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
