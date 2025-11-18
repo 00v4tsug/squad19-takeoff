@@ -1,0 +1,306 @@
+{% extends "admin/change_list.html" %}
+{% load static %}
+
+{% block extrahead %}
+{{ block.super }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .dashboard-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        margin: -1rem -1rem 2rem -1rem;
+        border-radius: 0 0 10px 10px;
+    }
+    
+    .metric-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+    
+    .metric-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border-left: 4px solid #667eea;
+    }
+    
+    .metric-value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #2d3748;
+    }
+    
+    .metric-label {
+        color: #718096;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    .charts-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 2rem;
+        margin-bottom: 2rem;
+    }
+    
+    .chart-container {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .chart-title {
+        font-size: 1.2rem;
+        font-weight: bold;
+        margin-bottom: 1rem;
+        color: #2d3748;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 0.5rem;
+    }
+    
+    .efficiency-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+    
+    .efficiency-alta { background: #c6f6d5; color: #22543d; }
+    .efficiency-media { background: #fed7d7; color: #742a2a; }
+    .efficiency-baixa { background: #feebcb; color: #744210; }
+    
+    .trend-up { color: #e53e3e; }
+    .trend-down { color: #38a169; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 style="margin: 0; font-size: 2rem;">📊 Dashboard de Custos Educacionais</h1>
+    <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">
+        Análise completa dos custos por aluno e eficiência operacional
+        {% if ultima_competencia %}
+        - Competência: {{ ultima_competencia }}
+        {% endif %}
+    </p>
+</div>
+
+{% if ultima_competencia %}
+<!-- Métricas Principais -->
+<div class="metric-cards">
+    <div class="metric-card">
+        <div class="metric-value">R$ {{ media_custo_aluno|floatformat:2 }}</div>
+        <div class="metric-label">Custo Médio por Aluno</div>
+    </div>
+    
+    <div class="metric-card">
+        <div class="metric-value">{{ total_instituicoes }}</div>
+        <div class="metric-label">Instituições Analisadas</div>
+    </div>
+    
+    <div class="metric-card">
+        <div class="metric-value">{{ total_alunos }}</div>
+        <div class="metric-label">Total de Alunos</div>
+    </div>
+    
+    <div class="metric-card">
+        <div class="metric-value">R$ {{ total_investido|floatformat:2 }}</div>
+        <div class="metric-label">Total Investido</div>
+    </div>
+</div>
+
+<!-- Gráficos -->
+<div class="charts-grid">
+    <div class="chart-container">
+        <div class="chart-title">Custo por Aluno - Top 10 Instituições</div>
+        <canvas id="custoChart" height="300"></canvas>
+    </div>
+    
+    <div class="chart-container">
+        <div class="chart-title">Composição dos Custos</div>
+        <canvas id="composicaoChart" height="300"></canvas>
+    </div>
+    
+    <div class="chart-container">
+        <div class="chart-title">Evolução do Custo Médio (Últimos 6 Meses)</div>
+        <canvas id="evolucaoChart" height="300"></canvas>
+    </div>
+    
+    <div class="chart-container">
+        <div class="chart-title">Eficiência por Instituição</div>
+        <canvas id="eficienciaChart" height="300"></canvas>
+    </div>
+</div>
+
+<!-- Distribuição de Eficiência -->
+<div class="chart-container">
+    <div class="chart-title">Distribuição de Eficiência</div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+        <div style="text-align: center; padding: 1rem;">
+            <div style="font-size: 2rem; color: #38a169;">{{ metricas_gerais.instituicoes_eficientes }}</div>
+            <div style="color: #718096;">Alta Eficiência</div>
+            <div style="color: #38a169; font-size: 0.9rem;">≥ 80%</div>
+        </div>
+        <div style="text-align: center; padding: 1rem;">
+            <div style="font-size: 2rem; color: #d69e2e;">{{ metricas_gerais.instituicoes_medias }}</div>
+            <div style="color: #718096;">Média Eficiência</div>
+            <div style="color: #d69e2e; font-size: 0.9rem;">60% - 79%</div>
+        </div>
+        <div style="text-align: center; padding: 1rem;">
+            <div style="font-size: 2rem; color: #e53e3e;">{{ metricas_gerais.instituicoes_baixas }}</div>
+            <div style="color: #718096;">Baixa Eficiência</div>
+            <div style="color: #e53e3e; font-size: 0.9rem;">&lt; 60%</div>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="chart-container">
+    <div style="text-align: center; padding: 3rem; color: #718096;">
+        <h3>📈 Nenhum dado disponível</h3>
+        <p>Execute o cálculo de custo por aluno para visualizar os dashboards.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Tabela Original -->
+<div style="margin-top: 3rem;">
+    {{ block.super }}
+</div>
+
+{% if ultima_competencia %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Gráfico de Custo por Instituição
+    const custoCtx = document.getElementById('custoChart').getContext('2d');
+    new Chart(custoCtx, {
+        type: 'bar',
+        data: {
+            labels: {{ grafico_custo_por_instituicao|safe|default:'[]' }}.map(item => item.instituicao__nome),
+            datasets: [{
+                label: 'Custo por Aluno (R$)',
+                data: {{ grafico_custo_por_instituicao|safe|default:'[]' }}.map(item => item.custo),
+                backgroundColor: 'rgba(102, 126, 234, 0.6)',
+                borderColor: 'rgba(102, 126, 234, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Custo (R$)'
+                    }
+                }
+            }
+        }
+    });
+
+    // Gráfico de Composição de Custos
+    const composicaoCtx = document.getElementById('composicaoChart').getContext('2d');
+    new Chart(composicaoCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Folha de Pagamento', 'Gastos Operacionais'],
+            datasets: [{
+                data: [
+                    {{ grafico_composicao_custos.folha|default:0 }},
+                    {{ grafico_composicao_custos.operacionais|default:0 }}
+                ],
+                backgroundColor: [
+                    'rgba(102, 126, 234, 0.8)',
+                    'rgba(237, 137, 54, 0.8)'
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    // Gráfico de Evolução Temporal
+    const evolucaoCtx = document.getElementById('evolucaoChart').getContext('2d');
+    new Chart(evolucaoCtx, {
+        type: 'line',
+        data: {
+            labels: {{ evolucao_temporal|safe|default:'[]' }}.map(item => item.periodo),
+            datasets: [{
+                label: 'Custo Médio por Aluno (R$)',
+                data: {{ evolucao_temporal|safe|default:'[]' }}.map(item => item.media_custo),
+                borderColor: 'rgba(102, 126, 234, 1)',
+                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Custo (R$)'
+                    }
+                }
+            }
+        }
+    });
+
+    // Gráfico de Eficiência
+    const eficienciaCtx = document.getElementById('eficienciaChart').getContext('2d');
+    new Chart(eficienciaCtx, {
+        type: 'bar',
+        data: {
+            labels: {{ grafico_eficiencia|safe|default:'[]' }}.map(item => item.instituicao__nome),
+            datasets: [{
+                label: 'Eficiência (%)',
+                data: {{ grafico_eficiencia|safe|default:'[]' }}.map(item => item.eficiencia),
+                backgroundColor: {{ grafico_eficiencia|safe|default:'[]' }}.map(item => 
+                    item.eficiencia >= 80 ? 'rgba(72, 187, 120, 0.6)' :
+                    item.eficiencia >= 60 ? 'rgba(237, 137, 54, 0.6)' :
+                    'rgba(229, 62, 62, 0.6)'
+                ),
+                borderColor: {{ grafico_eficiencia|safe|default:'[]' }}.map(item => 
+                    item.eficiencia >= 80 ? 'rgba(72, 187, 120, 1)' :
+                    item.eficiencia >= 60 ? 'rgba(237, 137, 54, 1)' :
+                    'rgba(229, 62, 62, 1)'
+                ),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    title: {
+                        display: true,
+                        text: 'Eficiência (%)'
+                    }
+                }
+            }
+        }
+    });
+});
+</script>
+{% endif %}
+{% endblock %}

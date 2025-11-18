@@ -4,6 +4,9 @@ from django.utils.html import format_html
 from django.db.models import Sum, Count
 from django.utils import timezone
 from .models import *
+from django.db.models import Sum, Avg, Count
+from django.contrib import messages
+import json
 
 class AdminSistemaSite(admin.AdminSite):
     site_header = "🏫 Sistema de Gestão Educacional - Painel Administrativo"
@@ -211,20 +214,325 @@ class SolicitacaoCadastroAdmin(admin.ModelAdmin):
 
 @admin.register(DashboardCustoAluno, site=admin_sistema)
 class DashboardCustoAlunoAdmin(admin.ModelAdmin):
-    list_display = ('instituicao', 'competencia', 'total_geral_format', 'quantidade_alunos', 'custo_por_aluno_format', 'data_calculo')
-    list_filter = ('competencia', 'instituicao__municipio__uf')
-    readonly_fields = ('data_calculo',)
+    list_display = [
+        'instituicao', 
+        'competencia', 
+        'custo_por_aluno_formatado',
+        'total_geral_formatado',
+        'quantidade_alunos',
+        'status_eficiencia_display',
+        'variacao_display',
+        'data_calculo_formatada'
+    ]
     
-    def total_geral_format(self, obj):
-        return format_html(f'<b style="color: #e74c3c;">R$ {obj.total_geral:,.2f}</b>')
-    total_geral_format.short_description = 'Total Geral'
+    list_filter = ['competencia', 'instituicao__municipio', 'instituicao__tipo']
+    search_fields = ['instituicao__nome']
+    readonly_fields = ['data_calculo', 'data_atualizacao', 'eficiencia_custo']
+    actions = ['calcular_dashboard_action']
+    
+    change_list_template = 'admin/dashboard_change_list.html'
 
-    def custo_por_aluno_format(self, obj):
-        return format_html(f'<b style="color: #27ae60;">R$ {obj.custo_por_aluno:,.2f}</b>')
-    custo_por_aluno_format.short_description = 'Custo por Aluno'
+    def changelist_view(self, request, extra_context=None):
+        # Calcular dashboard automaticamente se não houver dados recentes
+        self.calcular_dashboard_automatico(request)
+        
+        # Preparar dados para os gráficos
+        extra_context = extra_context or {}
+        self.preparar_dados_dashboard(extra_context)
+        
+        return super().changelist_view(request, extra_context=extra_context)
 
-    def has_add_permission(self, request):
-        return False
+    def calcular_dashboard_automatico(self, request):
+        """Calcula o dashboard automaticamente se necessário"""
+        # Verificar se existe alguma competência aberta
+        competencias_abertas = Competencia.objects.filter(aberta=True)
+        
+        if not competencias_abertas.exists():
+            messages.warning(request, "Não há competências abertas para cálculo.")
+            return
+        
+        # Para cada competência aberta, calcular dashboard
+        for competencia in competencias_abertas:
+            # Verificar se já existe dashboard para esta competência
+            dashboard_existente = DashboardCustoAluno.objects.filter(
+                competencia=competencia
+            ).exists()
+            
+            if not dashboard_existente:
+                self.calcular_para_competencia(competencia, request)
+    
+    def calcular_para_competencia(self, competencia, request):
+        """Calcula dashboard para uma competência específica"""
+        try:
+            instituicoes = Instituicao.objects.all()
+            dashboards_criados = 0
+            
+            for instituicao in instituicoes:
+                # Gastos operacionais
+                gastos_operacionais = LancamentoGasto.objects.filter(
+                    instituicao=instituicao,
+                    competencia=competencia
+                ).aggregate(total=Sum('valor_total'))['total'] or Decimal('0.00')
+                
+                # Folha de pagamento
+                folha_pagamento = FolhaPagamento.objects.filter(
+                    instituicao=instituicao,
+                    competencia=competencia
+                ).aggregate(total=Sum('valor_total'))['total'] or Decimal('0.00')
+                
+                # Dados de alunos
+                dados_alunos = DadosAlunos.objects.filter(
+                    instituicao=instituicao,
+                    competencia=competencia
+                ).first()
+                
+                if dados_alunos:
+                    quantidade_alunos = dados_alunos.quantidade_alunos
+                    
+                    # Criar ou atualizar dashboard
+                    dashboard, created = DashboardCustoAluno.objects.update_or_create(
+                        instituicao=instituicao,
+                        competencia=competencia,
+                        defaults={
+                            'total_gastos_operacionais': gastos_operacionais,
+                            'total_folha_pagamento': folha_pagamento,
+                            'quantidade_alunos': quantidade_alunos
+                        }
+                    )
+                    
+                    if created:
+                        dashboards_criados += 1
+            
+            if dashboards_criados > 0:
+                messages.success(
+                    request, 
+                    f'Dashboard calculado automaticamente para {competencia}. '
+                    f'{dashboards_criados} instituições processadas.'
+                )
+                
+        except Exception as e:
+            messages.error(
+                request, 
+                f'Erro ao calcular dashboard automaticamente: {str(e)}'
+            )
+
+    def preparar_dados_dashboard(self, extra_context):
+        """Prepara dados para os gráficos do dashboard"""
+        # Última competência com dados
+        ultima_competencia = Competencia.objects.filter(
+            dashboardcustoaluno__isnull=False
+        ).order_by('-ano', '-mes').first()
+        
+        if not ultima_competencia:
+            # Se não há dados, usar última competência aberta
+            ultima_competencia = Competencia.objects.filter(aberta=True).order_by('-ano', '-mes').first()
+        
+        if ultima_competencia:
+            dados_ultima_competencia = DashboardCustoAluno.objects.filter(
+                competencia=ultima_competencia
+            )
+            
+            # Métricas gerais
+            total_instituicoes = dados_ultima_competencia.count()
+            media_custo_aluno = dados_ultima_competencia.aggregate(
+                avg=Avg('custo_por_aluno')
+            )['avg'] or Decimal('0.00')
+            
+            total_alunos = dados_ultima_competencia.aggregate(
+                total=Sum('quantidade_alunos')
+            )['total'] or 0
+            
+            total_investido = dados_ultima_competencia.aggregate(
+                total=Sum('total_geral')
+            )['total'] or Decimal('0.00')
+            
+            # Dados para gráficos
+            grafico_custo_por_instituicao = list(
+                dados_ultima_competencia.values('instituicao__nome').annotate(
+                    custo=Avg('custo_por_aluno')
+                ).order_by('-custo')[:10]
+            )
+            
+            grafico_composicao_custos = {
+                'folha': float(dados_ultima_competencia.aggregate(
+                    total=Sum('total_folha_pagamento')
+                )['total'] or 0),
+                'operacionais': float(dados_ultima_competencia.aggregate(
+                    total=Sum('total_gastos_operacionais')
+                )['total'] or 0)
+            }
+            
+            grafico_eficiencia = list(
+                dados_ultima_competencia.values('instituicao__nome').annotate(
+                    eficiencia=Avg('eficiencia_custo')
+                ).order_by('-eficiencia')[:10]
+            )
+            
+            # Evolução temporal (últimos 6 meses)
+            ultimas_competencias = Competencia.objects.filter(
+                dashboardcustoaluno__isnull=False
+            ).distinct().order_by('-ano', '-mes')[:6]
+            
+            evolucao_temporal = []
+            for comp in ultimas_competencias:
+                dados_mes = DashboardCustoAluno.objects.filter(competencia=comp)
+                media_mes = dados_mes.aggregate(avg=Avg('custo_por_aluno'))['avg'] or Decimal('0.00')
+                evolucao_temporal.append({
+                    'periodo': str(comp),
+                    'media_custo': float(media_mes)
+                })
+            
+            evolucao_temporal.reverse()
+            
+            extra_context.update({
+                'ultima_competencia': ultima_competencia,
+                'total_instituicoes': total_instituicoes,
+                'media_custo_aluno': float(media_custo_aluno),
+                'total_alunos': total_alunos,
+                'total_investido': float(total_investido),
+                'grafico_custo_por_instituicao': json.dumps(grafico_custo_por_instituicao),
+                'grafico_composicao_custos': grafico_composicao_custos,
+                'grafico_eficiencia': json.dumps(grafico_eficiencia),
+                'evolucao_temporal': json.dumps(evolucao_temporal),
+                'metricas_gerais': {
+                    'instituicoes_eficientes': dados_ultima_competencia.filter(eficiencia_custo__gte=80).count(),
+                    'instituicoes_medias': dados_ultima_competencia.filter(eficiencia_custo__gte=60, eficiencia_custo__lt=80).count(),
+                    'instituicoes_baixas': dados_ultima_competencia.filter(eficiencia_custo__lt=60).count(),
+                }
+            })
+        else:
+            extra_context.update({
+                'sem_dados': True
+            })
+
+    def calcular_dashboard_action(self, request, queryset):
+        """Action para calcular dashboard manualmente"""
+        competencias = Competencia.objects.filter(aberta=True)
+        
+        if not competencias.exists():
+            self.message_user(request, "Não há competências abertas para cálculo.", messages.WARNING)
+            return
+        
+        dashboards_criados = 0
+        
+        for competencia in competencias:
+            dashboards_criados += self.calcular_para_competencia(competencia, request, silent=True)
+        
+        self.message_user(
+            request, 
+            f'Dashboard calculado para {competencias.count()} competências. '
+            f'{dashboards_criados} registros criados/atualizados.', 
+            messages.SUCCESS
+        )
+    
+    calcular_dashboard_action.short_description = "Calcular dashboard para competências abertas"
+
+    # Métodos de formatação (mantenha os anteriores)
+    def custo_por_aluno_formatado(self, obj):
+        return f"R$ {obj.custo_por_aluno:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+    custo_por_aluno_formatado.short_description = 'Custo/Aluno'
+
+    def total_geral_formatado(self, obj):
+        return f"R$ {obj.total_geral:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+    total_geral_formatado.short_description = 'Total Geral'
+
+    def data_calculo_formatada(self, obj):
+        return obj.data_calculo.strftime('%d/%m/%Y %H:%M')
+    data_calculo_formatada.short_description = 'Data do Cálculo'
+
+    def status_eficiencia_display(self, obj):
+        color = {
+            'alta': 'green',
+            'media': 'orange', 
+            'baixa': 'red'
+        }.get(obj.status_eficiencia, 'gray')
+        
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">●</span> {}',
+            color,
+            obj.status_eficiencia.upper()
+        )
+    status_eficiencia_display.short_description = 'Eficiência'
+
+    def variacao_display(self, obj):
+        variacao = obj.variacao_mensal
+        if variacao is not None:
+            color = 'green' if variacao <= 0 else 'red'
+            icon = '↘' if variacao <= 0 else '↗'
+            return format_html(
+                '<span style="color: {};">{} {:.1f}%</span>',
+                color, icon, abs(variacao)
+            )
+        return '-'
+    variacao_display.short_description = 'Variação'
+    
+    def calcular_para_competencia(self, competencia, request):
+        """Calcula dashboard para uma competência específica"""
+        try:
+            instituicoes = Instituicao.objects.all()
+            dashboards_criados = 0
+            
+            for instituicao in instituicoes:
+                # Gastos operacionais - Soma manual dos valores totais
+                lancamentos = LancamentoGasto.objects.filter(
+                    instituicao=instituicao,
+                    competencia=competencia
+                )
+                
+                gastos_operacionais = Decimal('0.00')
+                for lancamento in lancamentos:
+                    gastos_operacionais += lancamento.valor_total
+                
+                # Folha de pagamento - Soma manual dos valores totais
+                folhas = FolhaPagamento.objects.filter(
+                    instituicao=instituicao,
+                    competencia=competencia
+                )
+                
+                folha_pagamento = Decimal('0.00')
+                for folha in folhas:
+                    folha_pagamento += folha.valor_total
+                
+                # Dados de alunos
+                dados_alunos = DadosAlunos.objects.filter(
+                    instituicao=instituicao,
+                    competencia=competencia
+                ).first()
+                
+                if dados_alunos:
+                    quantidade_alunos = dados_alunos.quantidade_alunos
+                    
+                    # Criar ou atualizar dashboard
+                    dashboard, created = DashboardCustoAluno.objects.update_or_create(
+                        instituicao=instituicao,
+                        competencia=competencia,
+                        defaults={
+                            'total_gastos_operacionais': gastos_operacionais,
+                            'total_folha_pagamento': folha_pagamento,
+                            'quantidade_alunos': quantidade_alunos
+                        }
+                    )
+                    
+                    if created:
+                        dashboards_criados += 1
+            
+            if dashboards_criados > 0:
+                messages.success(
+                    request, 
+                    f'Dashboard calculado automaticamente para {competencia}. '
+                    f'{dashboards_criados} instituições processadas.'
+                )
+            else:
+                messages.info(
+                    request,
+                    f'Dashboard já está atualizado para {competencia}.'
+                )
+                
+        except Exception as e:
+            messages.error(
+                request, 
+                f'Erro ao calcular dashboard automaticamente: {str(e)}'
+            )
 
 # ========== MODELOS BÁSICOS ==========
 @admin.register(UnidadeFederativa, site=admin_sistema)
